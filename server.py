@@ -9,13 +9,15 @@ import sys
 # =============================================================================
 # Globals
 
-es_url = os.environ['ELASTICSEARCH_URL']
+es_host = os.environ['ELASTIC_HOST']
+es_user = os.environ['ELASTIC_USER']
+es_password = os.environ['ELASTIC_PASSWORD']
 es_index = os.environ['ELASTICSEARCH_INDEX']
 es_doc_type = os.environ['ELASTICSEARCH_DOC_TYPE']
 all_orientations = os.environ['ALL_ORIENTATIONS']
 
 app = Flask(__name__)
-es = Elasticsearch([es_url], verify_certs=True, timeout=60, max_retries=10, retry_on_timeout=True)
+es = Elasticsearch([es_host], verify_certs=True, timeout=60, max_retries=10, retry_on_timeout=True, http_auth=(es_user, es_password))
 ses = SignatureES(es, index=es_index, doc_type=es_doc_type)
 gis = ImageSignature()
 

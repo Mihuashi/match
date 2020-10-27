@@ -1,5 +1,4 @@
 FROM python:3.6
-MAINTAINER Alex Kern <alex@distributedsystems.com>
 
 RUN apt-get update && \
     apt-get install -y libopenblas-dev gfortran && \
@@ -14,9 +13,9 @@ RUN apt-get update && \
 COPY server.py wait-for-it.sh /
 
 EXPOSE 80
-ENV PORT=80 \
+ENV IMAGE_MATCH_PORT=80 \
     WORKER_COUNT=4 \
-    ELASTICSEARCH_URL=elasticsearch:9200 \
+    ELASTIC_HOST=elasticsearch:9200 \
     ELASTICSEARCH_INDEX=images \
     ELASTICSEARCH_DOC_TYPE=images \
     ALL_ORIENTATIONS=true
@@ -25,6 +24,6 @@ CMD gunicorn \
     -t 60 \
     --access-logfile - \
     --access-logformat '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" - %(D)s' \
-    -b 0.0.0.0:${PORT} \
+    -b 0.0.0.0:${IMAGE_MATCH_PORT} \
     -w ${WORKER_COUNT} \
     server:app
