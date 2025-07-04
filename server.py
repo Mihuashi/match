@@ -7,6 +7,51 @@ import os
 import sys
 
 # =============================================================================
+# 使用 FixSignatureES 替换 SignatureES 以修复 search_single_record 方法
+
+from image_match.signature_database_base import normalized_distance
+import numpy as np
+
+class FixSignatureES(SignatureES):
+    def search_single_record(self, rec):
+        path = rec.pop('path')
+        signature = rec.pop('signature')
+        if 'metadata' in rec:
+            rec.pop('metadata')
+
+        # build the 'should' list
+        should = [{'term': {word: rec[word]}} for word in rec]
+        res = self.es.search(index=self.index,
+                            # Elasticsearch Serverless 的 {index}/{type}/_search (过时)接口不支持 size 参数，所以需要这里去掉，改用 {index}/_search 接口
+                            #   doc_type=self.doc_type,
+                              body={'query': {
+                                       'bool': {'should': should}
+                                     },
+                                    '_source': {'excludes': ['simple_word_*']}
+                                   },
+                              size=self.size,
+                              timeout=self.timeout)['hits']['hits']
+
+        sigs = np.array([x['_source']['signature'] for x in res])
+
+        if sigs.size == 0:
+            return []
+
+        dists = normalized_distance(sigs, np.array(signature))
+
+        formatted_res = [{'id': x['_id'],
+                          'score': x['_score'],
+                          'metadata': x['_source'].get('metadata'),
+                          'path': x['_source'].get('url', x['_source'].get('path'))}
+                         for x in res]
+
+        for i, row in enumerate(formatted_res):
+            row['dist'] = dists[i]
+        formatted_res = filter(lambda y: y['dist'] < self.distance_cutoff, formatted_res)
+
+        return formatted_res
+
+# =============================================================================
 # Globals
 
 es_host = os.environ['ELASTIC_HOST']
@@ -18,7 +63,7 @@ all_orientations = os.environ['ALL_ORIENTATIONS']
 
 app = Flask(__name__)
 es = Elasticsearch([es_host], verify_certs=True, timeout=60, max_retries=10, retry_on_timeout=True, http_auth=(es_user, es_password))
-ses = SignatureES(es, index=es_index, doc_type=es_doc_type)
+ses = FixSignatureES(es, index=es_index, doc_type=es_doc_type)
 gis = ImageSignature()
 
 # Try to create the index and ignore IndexAlreadyExistsException
