@@ -7,30 +7,42 @@ import os
 import sys
 
 # =============================================================================
-# 使用 FixSignatureES 替换 SignatureES 以修复 search_single_record 方法
+# OptimizeSignatureES
 
+from datetime import datetime
 from image_match.signature_database_base import normalized_distance
 import numpy as np
 
-class FixSignatureES(SignatureES):
-    def search_single_record(self, rec):
-        path = rec.pop('path')
-        signature = rec.pop('signature')
-        if 'metadata' in rec:
-            rec.pop('metadata')
+class OptimizeSignatureES(SignatureES):
+    def optimize_record(self, rec):
+        simple_words = []
 
-        # build the 'should' list
-        should = [{'term': {word: rec[word]}} for word in rec]
-        res = self.es.search(index=self.index,
-                            # Elasticsearch Serverless 的 {index}/{type}/_search (过时)接口不支持 size 参数，所以需要这里去掉，改用 {index}/_search 接口
-                            #   doc_type=self.doc_type,
-                              body={'query': {
-                                       'bool': {'should': should}
-                                     },
-                                    '_source': {'excludes': ['simple_word_*']}
-                                   },
-                              size=self.size,
-                              timeout=self.timeout)['hits']['hits']
+        for i in range(self.N):
+            value = rec.pop('simple_word_' + str(i))
+            simple_words.append(str(i) + '-' + str(value))
+
+        rec['simple_words'] = simple_words
+
+    def insert_single_record(self, rec, refresh_after=False):
+        self.optimize_record(rec)
+        rec['timestamp'] = datetime.now()
+        self.es.index(index=self.index, doc_type=self.doc_type, body=rec, refresh=refresh_after)
+
+    def search_single_record(self, rec):
+        self.optimize_record(rec)
+        signature = rec.pop('signature')
+        should = [{'term': {'simple_words': word}} for word in rec.pop('simple_words')]
+        body = {
+            'query': {
+                'bool': {
+                    'should': should,
+                    'minimum_should_match': 1
+                }
+            },
+            '_source': ['signature', 'path', 'metadata']
+        }
+        # print(body)
+        res = self.es.search(index=self.index, body=body, size=self.size, timeout=self.timeout)['hits']['hits']
 
         sigs = np.array([x['_source']['signature'] for x in res])
 
@@ -63,12 +75,22 @@ all_orientations = os.environ['ALL_ORIENTATIONS']
 
 app = Flask(__name__)
 es = Elasticsearch([es_host], verify_certs=True, timeout=60, max_retries=10, retry_on_timeout=True, http_auth=(es_user, es_password))
-ses = FixSignatureES(es, index=es_index, doc_type=es_doc_type)
+ses = OptimizeSignatureES(es, index=es_index, doc_type=es_doc_type)
 gis = ImageSignature()
 
 # Try to create the index and ignore IndexAlreadyExistsException
 # if the index already exists
-es.indices.create(index=es_index, ignore=400)
+index_mappings = {
+    'mappings': {
+        'properties': {
+            'signature': { 'type': 'byte' },
+            'simple_words': { 'type': 'keyword' },
+            'path': { 'type': 'keyword' }
+        }
+    }
+}
+es.indices.create(index=es_index, body=index_mappings, ignore=400)
+# es.indices.create(index=es_index, ignore=400)
 
 # =============================================================================
 # Helpers
